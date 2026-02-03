@@ -1,0 +1,13 @@
+torch
+einops
+transformers
+torch_geometric
+pyctcdecode
+pandas
+tqdm
+jiwer
+librosa
+matplotlib
+scikit-learn
+gdown 
+datasets
