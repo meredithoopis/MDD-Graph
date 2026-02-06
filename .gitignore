@@ -6,3 +6,4 @@ checkpoint/
 #*.csv
 *.wav
 EN_MDD/
+*.json

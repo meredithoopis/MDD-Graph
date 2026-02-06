@@ -1,145 +1,145 @@
 import os
 import gc
-import ast
 import torch
 import torch.nn as nn
 import pandas as pd
 from tqdm import tqdm
-from dataloader import MDD_Dataset, collate_fn, build_stats_graph_from_df, PAD_ID, VOCAB_SIZE
+from dataloader import (
+    MDD_Dataset,
+    collate_fn,
+    PAD_ID,
+    VOCAB_SIZE,
+)
 from gcn_model import GCN_MDD
+from create_graph import get_graph
+from transformers import Wav2Vec2Config
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-num_epoch = 5 
-batch_size = 16
 
-ERR_PAD_ID = 2     # error padding id
-BETA = 0.3         # weight for diagnosis loss (paper uses beta for diagnosis)
+num_epoch = 30
+batch_size = 32
+lr = 1e-4
+
+CHECKPOINT_DIR = "checkpoint"
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 gc.collect()
 
-# Load data
-df_train = pd.read_csv("train_canonical_error.csv")
-df_dev = pd.read_csv("EN_MDD/dev.csv")
 
-train_dataset = MDD_Dataset(df_train)
-train_loader = torch.utils.data.DataLoader(
-    dataset=train_dataset,
-    batch_size=batch_size,
-    shuffle=True,
-    collate_fn=lambda b: collate_fn(b, pad_id=PAD_ID, err_pad_id=ERR_PAD_ID),
-)
+df_train = pd.read_csv("train.csv")
+L1_LIST = ["arabic", "mandarin", "hindi", "korean", "spanish", "vietnamese"]
 
-# Build graph stats from train
-edge_index, edge_weight = build_stats_graph_from_df(
-    df_train,
+
+all_edges, all_weights = get_graph(L1_LIST)
+
+loaders = {}
+
+for L1 in L1_LIST:
+    df_l1 = df_train[df_train["L1"].str.lower() == L1]
+    if len(df_l1) == 0:
+        print(f"No data for {L1}, skipping.")
+        continue
+    loaders[L1] = torch.utils.data.DataLoader(
+        MDD_Dataset(df_l1),
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+    )
+
+print("Loaded L1 loaders:", list(loaders.keys()))
+
+config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-base-100h")
+model = GCN_MDD(
+    config,
     vocab_size=VOCAB_SIZE,
     pad_id=PAD_ID,
-    top_k=5,              # 3,5,10
-    add_self_loops=True,
-    smoothing=0.01,
-)
+).to(device)
 
-
-# Load model + set graph
-model = GCN_MDD.from_pretrained("facebook/wav2vec2-base-100h", vocab_size=VOCAB_SIZE, pad_id=PAD_ID)
-model.set_graph(edge_index, edge_weight)
-model = model.to(device)
-model.indices = torch.arange(model.vocab_size, dtype=torch.long, device=device)
 
 model.wav2vec2.feature_extractor._freeze_parameters()
+ctc_loss = nn.CTCLoss(
+    blank=PAD_ID,
+    zero_infinity=True
+)
 
-
-# Losses
-diag_criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID)
-pos_weight = torch.tensor([4.0], device=device)
-bce_criterion = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 scaler = torch.cuda.amp.GradScaler()
-os.makedirs("checkpoint", exist_ok=True)
-best_total_loss = 1e9
+best_loss = float("inf")
 
-# Train
+
 for epoch in range(num_epoch):
     model.train()
-    running_total, running_diag, running_err = [], [], []
+    epoch_losses = []
 
-    print(f"\nEPOCH {epoch}:")
-    for step, batch in tqdm(enumerate(train_loader), total=len(train_loader)):
-        try:
-            acoustic, audio_mask, canonical, transcript, error_gt, aligned_lengths = batch
-            canonical = canonical.long().contiguous()
-            transcript = transcript.long().contiguous()
-            error_gt = error_gt.long().contiguous()
+    print(f"EPOCH {epoch}")
+    print(f"==============================")
+    for L1, loader in loaders.items():
+        edge_index = torch.tensor(
+            all_edges[L1], dtype=torch.long
+        ).t().contiguous().to(device)
+        edge_weight = torch.tensor(
+            all_weights[L1], dtype=torch.float
+        ).to(device)
+        model.set_graph(edge_index, edge_weight)
 
-            with torch.cuda.amp.autocast():
-                diag_logits, err_logits = model(acoustic, audio_mask, canonical)
-                
-                B, N, V = diag_logits.shape
-                diag_loss_per_pos = torch.nn.functional.cross_entropy(
-                    diag_logits.view(-1, V),
-                    transcript.view(-1),
-                    ignore_index=PAD_ID,
-                    reduction="none"
-                ).view(B, N)
-                pos_ids = torch.arange(N, device=transcript.device)[None, :]
-                diag_mask = (pos_ids < aligned_lengths[:, None]).float()
-                diag_loss = (diag_loss_per_pos * diag_mask).sum() / (diag_mask.sum() + 1e-8)
+        for step, batch in enumerate(tqdm(loader, leave=False)):
+            try:
+                audio, canonical, transcript_flat, transcript_lengths = batch
 
-                err_target = (error_gt == 0).float()
-                pos_ids = torch.arange(error_gt.size(1), device=error_gt.device)[None, :]
-                len_mask = (pos_ids < aligned_lengths[:, None]).float()
+                with torch.no_grad():
+                    audio_lengths = torch.full(
+                        (audio.size(0),),
+                        audio.size(1),
+                        dtype=torch.long,
+                        device=device
+                    )
+                    input_lengths = model.wav2vec2._get_feat_extract_output_lengths(
+                        audio_lengths
+                    )
 
-                err_mask = (error_gt != ERR_PAD_ID).float() * len_mask
+                with torch.cuda.amp.autocast():
+                    audio_mask = torch.ones_like(audio, dtype=torch.long)
+                    logits = model(audio, audio_mask, canonical)
+                    log_probs = logits.log_softmax(dim=-1).transpose(0, 1)
 
-                err_loss_per_pos = bce_criterion(err_logits, err_target)
-                err_loss = (err_loss_per_pos * err_mask).sum() / (err_mask.sum() + 1e-8)
-                
-                # Total loss
-                loss = err_loss + BETA * diag_loss
-                
-            optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
+                    loss = ctc_loss(
+                        log_probs,
+                        transcript_flat,
+                        input_lengths,
+                        transcript_lengths
+                    )
 
-            running_total.append(loss.item())
-            running_diag.append(diag_loss.item())
-            running_err.append(err_loss.item())
-            
-        except Exception as e:
-            print(f"ERROR in batch {step}: {e}")
-            torch.cuda.empty_cache()
-            continue
-        
-        if step % 10 == 0:
-            torch.cuda.empty_cache()
+                optimizer.zero_grad(set_to_none=True)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
 
-    if len(running_total) == 0:
-        print("ERROR: No valid batches in this epoch!")
+                epoch_losses.append(loss.item())
+
+            except Exception as e:
+                print(f"[ERROR][{L1}] step={step}: {e}")
+                torch.cuda.empty_cache()
+                continue
+
+    if len(epoch_losses) == 0:
+        print("No valid batches this epoch.")
         continue
 
-    avg_total = sum(running_total) / len(running_total)
-    avg_diag = sum(running_diag) / len(running_diag)
-    avg_err = sum(running_err) / len(running_err)
+    avg_loss = sum(epoch_losses) / len(epoch_losses)
+    print(f"\nEpoch {epoch} mean CTC loss: {avg_loss:.4f}")
 
-    print(f"Train total loss: {avg_total:.4f} | diag loss: {avg_diag:.4f} | err loss: {avg_err:.4f}")
-
-
-    if avg_total < best_total_loss:
-        best_total_loss = avg_total
-        print("Saving checkpoint...")
+    if avg_loss < best_loss:
+        best_loss = avg_loss
+        ckpt_path = os.path.join(CHECKPOINT_DIR, "best.pth")
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
-                "edge_index": edge_index,
-                "edge_weight": edge_weight,
                 "epoch": epoch,
-                "best_total_loss": best_total_loss,
+                "best_loss": best_loss,
             },
-            "checkpoint/gcn_mdd_stats_best.pth"
+            ckpt_path
         )
-        print(f"Saved: checkpoint/gcn_mdd_stats_best.pth (best_total_loss={best_total_loss:.4f})")
-
+        print(f"Saved checkpoint: {ckpt_path}")
