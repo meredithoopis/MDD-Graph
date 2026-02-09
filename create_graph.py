@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import torch 
 
 
-def get_graph_from_json(json_path: str, alpha: float = 1.0, topk: int | None = None):
+def get_graph_from_json(json_path: str, alpha: float = 0.6, topk: int | None = None):
     """
     Build graph edges for j -> i (observed -> canonical), weight = P(i | j)
     alpha: temperature smoothing (w^alpha then renorm per source node j)
@@ -57,7 +57,7 @@ def get_graph_from_json(json_path: str, alpha: float = 1.0, topk: int | None = N
     return edge_index, edge_weight
 
 
-# all_edges, all_weights = get_graph_from_json("data_all.json", alpha=0.7, topk=None)
+# all_edges, all_weights = get_graph_from_json("data_all.json", alpha=0.6, topk=None)
 # print(all_edges)
 # print(all_weights)
 
@@ -88,7 +88,5 @@ def get_graph_from_json(json_path: str, alpha: float = 1.0, topk: int | None = N
 
 #     plt.title(f"Ego graph of nodes {target_nodes}")
 #     plt.show()
-
-
 
 

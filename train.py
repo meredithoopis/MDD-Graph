@@ -17,7 +17,7 @@ from transformers import Wav2Vec2Config
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-num_epoch = 30
+num_epoch = 15
 batch_size = 32
 lr = 5e-5
 
@@ -37,8 +37,8 @@ train_loader = torch.utils.data.DataLoader(
 
 edge_index, edge_weight = get_graph_from_json(
     "data_all.json",
-    alpha=0.7, 
-    topk=None    # 3/5/10
+    alpha=0.6, 
+    topk=10   # 3/5/10
 )
 edge_index = edge_index.to(device)
 edge_weight = edge_weight.to(device)

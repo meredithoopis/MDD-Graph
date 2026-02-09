@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn import GCNConv
 from transformers import Wav2Vec2Model, Wav2Vec2PreTrainedModel
 
 
@@ -19,18 +19,8 @@ class LookUpGCN(nn.Module):
             with torch.no_grad():
                 self.embedding.weight[pad_id].zero_()
 
-        self.conv1 = GATv2Conv(
-            embed_dim, hidden_channels,
-            heads=1, concat=False,
-            add_self_loops=True,      # add self-loop
-            edge_dim=1
-        )
-        self.conv2 = GATv2Conv(
-            hidden_channels, out_channels,
-            heads=1, concat=False,
-            add_self_loops=True,
-            edge_dim=1
-        )
+        self.conv1 = GCNConv(embed_dim, hidden_channels, add_self_loops=True, normalize=True)
+        self.conv2 = GCNConv(hidden_channels, out_channels, add_self_loops=True, normalize=True)
 
         self.norm1 = nn.LayerNorm(hidden_channels)
         self.norm2 = nn.LayerNorm(out_channels)
@@ -38,12 +28,11 @@ class LookUpGCN(nn.Module):
 
     def forward(self, node_ids, edge_index, edge_weight):
         x = self.embedding(node_ids)
-        edge_attr = edge_weight.unsqueeze(-1)
 
-        x1 = self.conv1(x, edge_index, edge_attr=edge_attr)
+        x1 = self.conv1(x, edge_index, edge_weight=edge_weight)
         x = self.norm1(x + self.dropout(x1))
 
-        x2 = self.conv2(x, edge_index, edge_attr=edge_attr)
+        x2 = self.conv2(x, edge_index, edge_weight=edge_weight)
         x = self.norm2(x + self.dropout(x2))
 
         return x

@@ -43,8 +43,8 @@ def ctc_greedy_decode(log_probs, blank_id):
 
 edge_index, edge_weight = get_graph_from_json(
     "data_all.json",
-    alpha=0.7, 
-    topk=None
+    alpha=0.6, 
+    topk=10
 )
 edge_index = edge_index.to(device)
 edge_weight = edge_weight.to(device)
