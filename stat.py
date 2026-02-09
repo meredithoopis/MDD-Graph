@@ -145,86 +145,36 @@ def merge_2dict(res: dict, dict_need_to_merge: dict) -> dict:
 def get_keys_by_value(my_dict, target_value):
     return [key for key, value in my_dict.items() if value == target_value]
 
+
+
 # dataset EDA
 data = pd.read_csv("train.csv")
-
 vocab = {"t": 0, "uw": 1, "er": 2, "ah": 3, "sh": 4, "ng": 5, "ow": 6, "aw": 7, "aa": 8, "th": 9, "ih": 10, "zh": 11, "k": 12, "y": 13, "l": 14, "uh": 15, "ch": 16, "w": 17, "b": 18, "v": 19, "ao": 20, "s": 21, "p": 22, "iy": 23, "r": 24, "eh": 25, "f": 26, "n": 27, "ay": 28, "oy": 29, "d": 30, "g": 31, "ey": 32, "err": 33, "dh": 34, "ae": 35, "hh": 36, "m": 37, "jh": 38, "z": 39, "<eps>": 40}
+res = {}
 
-L1_LIST = [
-    "Arabic",
-    "Mandarin",
-    "Hindi",
-    "Korean",
-    "Spanish",
-    "Vietnamese",
-]
-
-
-for l1 in L1_LIST:
-    print(f"Processing L1: {l1}")
-    
-    subset = data[data["L1"] == l1]
-    res = {}
-
-    for phoneme in tqdm(vocab.keys(), desc=l1):
-        for i in range(len(subset)):
-            res = merge_2dict(
-                res,
-                confusion_matrix(
-                    subset.iloc[i]["Canonical"],
-                    subset.iloc[i]["Transcript"],
-                    token=phoneme
-                )
+for phoneme in tqdm(vocab.keys()):
+    for i in range(len(data)):
+        res = merge_2dict(
+            res,
+            confusion_matrix(
+                data.iloc[i]["Canonical"],
+                data.iloc[i]["Transcript"],
+                token=phoneme
             )
+        )
 
-    # Convert phoneme → id
-    numeric_data = {
-        (vocab[t1], vocab[t2]): count
-        for (t1, t2), count in res.items()
-    }
+# Convert phoneme → id
+numeric_data = {
+    (vocab[t1], vocab[t2]): count
+    for (t1, t2), count in res.items()
+}
 
-    # Make JSON compatible
-    json_data = {
-        f"{k[0]}_{k[1]}": v
-        for k, v in numeric_data.items()
-    }
-
-    with open(f"data_{l1.lower()}.json", "w") as f:
-        json.dump(json_data, f, indent=4)
+json_data = {f"{k[0]}_{k[1]}": v for k, v in numeric_data.items()}
+with open("data_all.json", "w") as f:
+    json.dump(json_data, f, indent=4)
+print("Saved: data_all.json")
 
 
 
-# res = {}
 
-# for phoneme in tqdm(vocab.keys()):
-#     for i in range(len(data)):
-#         res = merge_2dict(res, confusion_matrix(data['Canonical'][i], data['Transcript'][i],token=phoneme))
 
-# data = {(vocab[t1], vocab[t2]): count for (t1, t2), count in res.items()}
-# json_compatible_data = {f"{key[0]}_{key[1]}": value for key, value in data.items()}
-
-# with open('data.json', 'w') as json_file:
-#     json.dump(json_compatible_data, json_file, indent=4)
-
-# # create weight 
-# import json
-
-# data = json.load(open("./data.json", "r", encoding="utf8"))
-# grouped_sum = {}
-
-# for key, value in data.items():
-#     first_element = key.split('_')[0]
-#     grouped_sum[first_element] = grouped_sum.get(first_element, 0) + value
-
-# res = {}
-# for key, value in data.items():
-#     first_element = key.split('_')[0]
-#     res[key] = value/grouped_sum[first_element]
-
-# # create graph
-# edges = []
-# weights = []
-# for key, weight in res.items():
-#     node1, node2 = map(int, key.split('_'))  # Convert to integer
-#     edges.append((node1, node2))
-#     weights.append(weight)

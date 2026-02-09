@@ -8,9 +8,10 @@ from transformers import Wav2Vec2FeatureExtractor
 import pandas as pd
 
 
-dict_vocab = {"t": 0, "uw": 1, "er": 2, "ah": 3, "sh": 4, "ng": 5, "ow": 6, "aw": 7, "aa": 8, "th": 9, "ih": 10, "zh": 11, "k": 12, "y": 13, "l": 14, "uh": 15, "ch": 16, "w": 17, "b": 18, "v": 19, "ao": 20, "s": 21, "p": 22, "iy": 23, "r": 24, "eh": 25, "f": 26, "n": 27, "ay": 28, "oy": 29, "d": 30, "g": 31, "ey": 32, "err": 33, "dh": 34, "ae": 35, "hh": 36, "m": 37, "jh": 38, "z": 39, "<eps>": 40}
+dict_vocab = {"t": 0, "uw": 1, "er": 2, "ah": 3, "sh": 4, "ng": 5, "ow": 6, "aw": 7, "aa": 8, "th": 9, "ih": 10, "zh": 11, "k": 12, "y": 13, "l": 14, "uh": 15, "ch": 16, "w": 17, "b": 18, "v": 19, "ao": 20, "s": 21, "p": 22, "iy": 23, "r": 24, "eh": 25, "f": 26, "n": 27, "ay": 28, "oy": 29, "d": 30, "g": 31, "ey": 32, "err": 33, "dh": 34, "ae": 35, "hh": 36, "m": 37, "jh": 38, "z": 39, "<eps>": 40, "<blank>": 41 }
 
 PAD_ID = dict_vocab["<eps>"]
+BLANK_ID = dict_vocab["<blank>"]
 VOCAB_SIZE = len(dict_vocab)
 
 
@@ -73,7 +74,7 @@ def collate_fn(batch, pad_id=PAD_ID):
     ]
     canonical = torch.tensor(canonical_pad).long().to(device)
 
-    # transcript: CTC target
+    # transcript: CTC target 
     transcript_flat = []
     transcript_lengths = []
 

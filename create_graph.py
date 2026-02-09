@@ -1,93 +1,94 @@
 import json
 import networkx as nx
 import matplotlib.pyplot as plt
+import torch 
 
 
-# i mispronounced as j: j → i
-l1 = ["arabic", "mandarin", "hindi", "korean", "spanish", "vietnamese"]
+def get_graph_from_json(json_path: str, alpha: float = 1.0, topk: int | None = None):
+    """
+    Build graph edges for j -> i (observed -> canonical), weight = P(i | j)
+    alpha: temperature smoothing (w^alpha then renorm per source node j)
+    topk: keep only top-k outgoing edges per source node j (optional)
+    """
+    data = json.load(open(json_path, "r", encoding="utf8"))
 
-def get_graph(languages):
-    edges = {}
-    weights = {}
+    # grouped_sum over observed node j
+    grouped_sum = {}
+    raw_edges_by_j = {}
 
-    for lang in languages:
-        data = json.load(open(f"data_{lang}.json", "r", encoding="utf8"))
+    for key, value in data.items():
+        i, j = map(int, key.split('_'))  # i=canonical, j=observed
+        grouped_sum[j] = grouped_sum.get(j, 0) + value
+        raw_edges_by_j.setdefault(j, []).append((i, value))
 
-        grouped_sum = {}
-        for key, value in data.items():
-            i, j = map(int, key.split('_'))   # i = canonical, j = observed
-            grouped_sum[j] = grouped_sum.get(j, 0) + value
+    edges = []
+    weights = []
 
-        lang_edges = []
-        lang_weights = []
+    for j, items in raw_edges_by_j.items():
+        denom = grouped_sum.get(j, 0)
+        if denom == 0:
+            continue
 
-        # j -> i
-        for key, value in data.items():
-            i, j = map(int, key.split('_'))
-            weight = value / grouped_sum[j]
-            lang_edges.append((j, i))  
-            lang_weights.append(weight)
-        edges[lang] = lang_edges
-        weights[lang] = lang_weights
+        # base weights: P(i|j)
+        tmp = []
+        for (i, cnt) in items:
+            w = cnt / denom
+            tmp.append((i, w))
 
-    return edges, weights
+        # optional smoothing
+        if alpha != 1.0:
+            s = sum((w ** alpha) for (_, w) in tmp)
+            if s > 0:
+                tmp = [(i, (w ** alpha) / s) for (i, w) in tmp]
 
+        # optional top-k pruning
+        if topk is not None and topk > 0:
+            tmp = sorted(tmp, key=lambda x: x[1], reverse=True)[:topk]
+            s = sum(w for (_, w) in tmp)
+            if s > 0:
+                tmp = [(i, w / s) for (i, w) in tmp]
 
-def visualize_multi_nodes(edges, weights, target_nodes):
-    G = nx.DiGraph()
+        for (i, w) in tmp:
+            edges.append((j, i))     # j -> i
+            weights.append(float(w))
 
-    for (u, v), w in zip(edges, weights):
-        if u in target_nodes:
-            G.add_edge(u, v, weight=round(w, 3))
-
-    pos = nx.spring_layout(G, seed=42)
-
-    plt.figure(figsize=(8, 8))
-    nx.draw(
-        G, pos,
-        with_labels=True,
-        node_size=1000,
-        arrows=True
-    )
-
-    nx.draw_networkx_edge_labels(
-        G, pos,
-        edge_labels=nx.get_edge_attributes(G, 'weight')
-    )
-
-    plt.title(f"Ego graph of nodes {target_nodes}")
-    plt.show()
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()  # (2, E)
+    edge_weight = torch.tensor(weights, dtype=torch.float)              # (E,)
+    return edge_index, edge_weight
 
 
-all_edges, all_weights = get_graph(l1)
+# all_edges, all_weights = get_graph_from_json("data_all.json", alpha=0.7, topk=None)
 # print(all_edges)
 # print(all_weights)
 
 
 
 
-# visualize_multi_nodes(all_edges["arabic"], all_weights["arabic"], target_nodes=[0, 2])
+# def visualize_multi_nodes(edges, weights, target_nodes):
+#     G = nx.DiGraph()
 
-# batching theo language trước xong forward => tiết kiệm thời gian không cần phải forward cả 6 graph
-# norm lại weights theo từng node do one caveat
-# embedding graph xong rồi mới lấy indices
-# dùng mixture of expert? fusion graph statistic vs graph convolutional neural network
+#     for (u, v), w in zip(edges, weights):
+#         if u in target_nodes:
+#             G.add_edge(u, v, weight=round(w, 3))
+
+#     pos = nx.spring_layout(G, seed=42)
+
+#     plt.figure(figsize=(8, 8))
+#     nx.draw(
+#         G, pos,
+#         with_labels=True,
+#         node_size=1000,
+#         arrows=True
+#     )
+
+#     nx.draw_networkx_edge_labels(
+#         G, pos,
+#         edge_labels=nx.get_edge_attributes(G, 'weight')
+#     )
+
+#     plt.title(f"Ego graph of nodes {target_nodes}")
+#     plt.show()
 
 
-# print(all_edges["arabic"])
-# print(all_weights["arabic"])
 
 
-# 6️⃣ One caveat ⚠️ (very important)
-# If weights are: extremely peaked (e.g. 0.99 / 0.01)
-# or noisy / data-sparse
-# GCN can:
-# overfit
-# oversmooth
-# ignore rare but important errors
-# Common fixes
-# Temperature smoothing:
-
-# w^alpha / (sum (w^alpha)), α ∈ (0.5, 1)
-# Top-K pruning
-# Entropy regularization

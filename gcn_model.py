@@ -22,7 +22,7 @@ class LookUpGCN(nn.Module):
         self.conv1 = GATv2Conv(
             embed_dim, hidden_channels,
             heads=1, concat=False,
-            add_self_loops=True,      
+            add_self_loops=True,      # add self-loop
             edge_dim=1
         )
         self.conv2 = GATv2Conv(
@@ -50,7 +50,10 @@ class LookUpGCN(nn.Module):
 
 
 class GCN_MDD(Wav2Vec2PreTrainedModel):
-    def __init__(self, config, vocab_size=41, pad_id=40):
+    """
+    Acoustic–Linguistic Phoneme ASR with CTC
+    """
+    def __init__(self, config, vocab_size: int, pad_id: int):
         super().__init__(config)
 
         self.vocab_size = vocab_size
@@ -59,7 +62,7 @@ class GCN_MDD(Wav2Vec2PreTrainedModel):
         # Acoustic encoder
         self.wav2vec2 = Wav2Vec2Model(config)
 
-        # Linguistic encoder 
+        # Linguistic encoder (graph)
         self.look_up_model = LookUpGCN(
             num_phonemes=vocab_size,
             embed_dim=config.hidden_size,
