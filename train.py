@@ -37,9 +37,12 @@ train_loader = torch.utils.data.DataLoader(
 
 edge_index, edge_weight = get_graph_from_json(
     "data_all.json",
-    alpha=0.6, 
-    topk=10   # 3/5/10
+    alpha=0.6, # 3/5/10
+    topk=None, 
+    min_prob = 0.0, 
+    renorm_after_filter= True 
 )
+
 edge_index = edge_index.to(device)
 edge_weight = edge_weight.to(device)
 
