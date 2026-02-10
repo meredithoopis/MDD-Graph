@@ -8,6 +8,7 @@ from dataloader import (
     MDD_Dataset,
     collate_fn,
     PAD_ID,
+    BLANK_ID,  
     VOCAB_SIZE,
 )
 from gcn_model import GCN_MDD
@@ -17,9 +18,9 @@ from transformers import Wav2Vec2Config
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-num_epoch = 30
+num_epoch = 5
 batch_size = 32
-lr = 1e-4
+lr = 5e-5
 
 CHECKPOINT_DIR = "checkpoint"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -31,7 +32,7 @@ df_train = pd.read_csv("train.csv")
 L1_LIST = ["arabic", "mandarin", "hindi", "korean", "spanish", "vietnamese"]
 
 
-all_edges, all_weights = get_graph(L1_LIST)
+all_edges, all_weights = get_graph(L1_LIST, threshold=0.01, alpha=0.7, topk=10)
 
 loaders = {}
 
@@ -47,7 +48,6 @@ for L1 in L1_LIST:
         collate_fn=collate_fn,
     )
 
-print("Loaded L1 loaders:", list(loaders.keys()))
 
 config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-base-100h")
 model = GCN_MDD(
@@ -59,7 +59,7 @@ model = GCN_MDD(
 
 model.wav2vec2.feature_extractor._freeze_parameters()
 ctc_loss = nn.CTCLoss(
-    blank=PAD_ID,
+    blank=BLANK_ID,
     zero_infinity=True
 )
 

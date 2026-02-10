@@ -50,7 +50,7 @@ class LookUpGCN(nn.Module):
 
 
 class GCN_MDD(Wav2Vec2PreTrainedModel):
-    def __init__(self, config, vocab_size=41, pad_id=40):
+    def __init__(self, config, vocab_size: int, pad_id: int):
         super().__init__(config)
 
         self.vocab_size = vocab_size
