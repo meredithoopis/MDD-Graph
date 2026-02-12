@@ -51,7 +51,7 @@ def clean_hyp(h: str) -> str:
 if not os.path.exists(CKPT_PATH):
     raise FileNotFoundError(f"Checkpoint not found: {CKPT_PATH}")
 
-config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-base-100h")
+config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-large-xlsr-53")
 model = GCN_MDD(config, vocab_size=VOCAB_SIZE, pad_id=PAD_ID).to(device)
 
 ckpt = torch.load(CKPT_PATH, map_location=device)
