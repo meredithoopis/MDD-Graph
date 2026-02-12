@@ -60,20 +60,24 @@ class GCN_MDD(Wav2Vec2PreTrainedModel):
         self.pad_id = pad_id
 
         # Acoustic encoder
-        self.wav2vec2 = Wav2Vec2Model(config)
+        self.wav2vec2 = Wav2Vec2Model.from_pretrained(
+            "facebook/wav2vec2-large-xlsr-53"
+        )
+
+        hidden = self.wav2vec2.config.hidden_size  # 1024
 
         # Linguistic encoder (graph)
         self.look_up_model = LookUpGCN(
             num_phonemes=vocab_size,
-            embed_dim=config.hidden_size,
-            hidden_channels=config.hidden_size,
-            out_channels=config.hidden_size,
+            embed_dim=hidden,
+            hidden_channels=hidden,
+            out_channels=hidden,
             pad_id=pad_id,
         )
 
         # Cross-attention: audio queries linguistic
         self.cross_attn = nn.MultiheadAttention(
-            embed_dim=config.hidden_size,
+            embed_dim=hidden,
             num_heads=16,
             dropout=0.2,
             batch_first=True,
@@ -85,7 +89,7 @@ class GCN_MDD(Wav2Vec2PreTrainedModel):
 
         # Final classifier 
         self.classifier = nn.Linear(
-            config.hidden_size * 2, vocab_size
+            hidden * 2, vocab_size
         )
 
         # Graph buffers

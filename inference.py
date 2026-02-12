@@ -23,7 +23,7 @@ edge_index, edge_weight = get_graph_from_json("data_all.json", alpha=0.7, topk=N
 edge_index, edge_weight = edge_index.to(device), edge_weight.to(device)
 
 # model
-config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-base-100h")
+config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-large-xlsr-53")
 model = GCN_MDD(config, vocab_size=VOCAB_SIZE, pad_id=PAD_ID).to(device)
 
 ckpt = torch.load(ckpt_path, map_location=device)
