@@ -117,8 +117,8 @@ def confusion_matrix(seq1: str, seq2: str, token=None) -> dict:
     for i in range(len(aligned_seq1)):
         if aligned_seq1[i] == token:
             # Remove self-loop: token -> token
-            if aligned_seq1[i] != aligned_seq2[i]:
-                pairs.append((aligned_seq1[i], aligned_seq2[i]))
+            #if aligned_seq1[i] != aligned_seq2[i]:
+            pairs.append((aligned_seq1[i], aligned_seq2[i]))
 
     unique_pairs = set(pairs)
     counts = {}

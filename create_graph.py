@@ -26,8 +26,8 @@ def get_graph(
 
             if cnt <= 0:
                 continue
-            if i == j:
-                continue  
+            # if i == j:
+            #     continue  
 
             by_i.setdefault(i, []).append((j, cnt))
 
