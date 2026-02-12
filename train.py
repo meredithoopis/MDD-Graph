@@ -24,7 +24,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 gc.collect()
 
 num_epoch = 15
-batch_size = 32
+batch_size = 8
 lr = 5e-5
 
 CHECKPOINT_DIR = "checkpoint"
@@ -51,7 +51,7 @@ edge_index = edge_index.to(device)
 edge_weight = edge_weight.to(device)
 
 
-config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-base-100h")
+config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-large-xlsr-53")
 model = GCN_MDD(config, vocab_size=VOCAB_SIZE, pad_id=PAD_ID).to(device)
 model.wav2vec2.feature_extractor._freeze_parameters()
 model.set_graph(edge_index, edge_weight)

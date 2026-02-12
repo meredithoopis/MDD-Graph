@@ -1,142 +1,80 @@
+import os, gc, re
 import torch
-import torch.nn as nn
-from torch_geometric.nn import GCNConv
-from transformers import Wav2Vec2Model, Wav2Vec2PreTrainedModel
+import pandas as pd
+import librosa
+from tqdm import tqdm
+from pyctcdecode import build_ctcdecoder
+from transformers import Wav2Vec2Config
 
+from dataloader import text_to_tensor, dict_vocab, PAD_ID, BLANK_ID, VOCAB_SIZE, feature_extractor
+from gcn_model import GCN_MDD
+from create_graph import get_graph_from_json
 
-class LookUpGCN(nn.Module):
-    """
-    Linguistic encoder:
-    - Nodes = phonemes
-    - Aggregation from incoming neighbors (j -> i)
-    """
-    def __init__(self, num_phonemes, embed_dim, hidden_channels, out_channels, pad_id):
-        super().__init__()
-        self.embedding = nn.Embedding(num_phonemes, embed_dim, padding_idx=pad_id)
-        nn.init.xavier_uniform_(self.embedding.weight, gain=0.5)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+gc.collect()
 
-        if pad_id is not None:
-            with torch.no_grad():
-                self.embedding.weight[pad_id].zero_()
+CHECKPOINT_DIR = "checkpoint"
+ckpt_path = os.path.join(CHECKPOINT_DIR, "best.pth")
 
-        self.conv1 = GCNConv(embed_dim, hidden_channels, add_self_loops=True, normalize=True)
-        self.conv2 = GCNConv(hidden_channels, out_channels, add_self_loops=True, normalize=True)
+df_test = pd.read_csv("test.csv")
 
-        self.norm1 = nn.LayerNorm(hidden_channels)
-        self.norm2 = nn.LayerNorm(out_channels)
-        self.dropout = nn.Dropout(0.1)
+# graph
+edge_index, edge_weight = get_graph_from_json("data_all.json", alpha=0.6, topk=None, min_prob=0.0, renorm_after_filter=True)
+edge_index, edge_weight = edge_index.to(device), edge_weight.to(device)
 
-    def forward(self, node_ids, edge_index, edge_weight):
-        x = self.embedding(node_ids)
+# model
+config = Wav2Vec2Config.from_pretrained("facebook/wav2vec2-large-xlsr-53")
+model = GCN_MDD(config, vocab_size=VOCAB_SIZE, pad_id=PAD_ID).to(device)
 
-        x1 = self.conv1(x, edge_index, edge_weight=edge_weight)
-        x = self.norm1(x + self.dropout(x1))
+ckpt = torch.load(ckpt_path, map_location=device)
+model.load_state_dict(ckpt["model_state_dict"])
+model.set_graph(edge_index, edge_weight)
+model.eval()
 
-        x2 = self.conv2(x, edge_index, edge_weight=edge_weight)
-        x = self.norm2(x + self.dropout(x2))
+# decoder labels
+id_to_token = {v: k for k, v in dict_vocab.items()}
+EPS_SYM = "¤"
+labels = []
+for i in range(VOCAB_SIZE):
+    tok = id_to_token[i]
+    if i == BLANK_ID:
+        labels.append("")
+    elif i == PAD_ID:
+        labels.append(EPS_SYM)
+    else:
+        labels.append(tok + " ")
+decoder = build_ctcdecoder(labels=labels)
 
-        return x
+def clean_hyp(s: str) -> str:
+    s = s.replace(EPS_SYM, "")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
+all_results = []
+with torch.no_grad():
+    for i in tqdm(range(len(df_test)), desc="Inference"):
+        wav_path = "EN_MDD/WAV/" + df_test.loc[i, "Path"] + ".wav"
+        wav, _ = librosa.load(wav_path, sr=16000)
 
-class GCN_MDD(Wav2Vec2PreTrainedModel):
-    """
-    Acoustic–Linguistic Phoneme ASR with CTC
-    """
-    def __init__(self, config, vocab_size: int, pad_id: int):
-        super().__init__(config)
+        inputs = feature_extractor(wav, sampling_rate=16000)
+        audio = torch.tensor(inputs.input_values, device=device).float()  # (1,T)
 
-        self.vocab_size = vocab_size
-        self.pad_id = pad_id
+        canonical_ids = text_to_tensor(df_test.loc[i, "Canonical"])
+        canonical = torch.tensor(canonical_ids, device=device).long().unsqueeze(0)
 
-        # Acoustic encoder
-        self.wav2vec2 = Wav2Vec2Model(config)
+        logits = model(audio, canonical)
+        log_probs = logits.log_softmax(dim=-1).squeeze(0).cpu().numpy()  # (T',V)
 
-        # Linguistic encoder (graph)
-        self.look_up_model = LookUpGCN(
-            num_phonemes=vocab_size,
-            embed_dim=config.hidden_size,
-            hidden_channels=config.hidden_size,
-            out_channels=config.hidden_size,
-            pad_id=pad_id,
-        )
+        hyp = clean_hyp(decoder.decode(log_probs))
 
-        # Cross-attention: audio queries linguistic
-        self.cross_attn = nn.MultiheadAttention(
-            embed_dim=config.hidden_size,
-            num_heads=16,
-            dropout=0.2,
-            batch_first=True,
-        )
+        all_results.append({
+            "Path": df_test.loc[i, "Path"],
+            "L1": df_test.loc[i, "L1"],
+            "Canonical": df_test.loc[i, "Canonical"],
+            "Transcript": df_test.loc[i, "Transcript"],
+            "Predicted": hyp,
+        })
 
-        self.linear_q = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_k = nn.Linear(config.hidden_size, config.hidden_size)
-        self.linear_v = nn.Linear(config.hidden_size, config.hidden_size)
-
-        # Final classifier 
-        self.classifier = nn.Linear(
-            config.hidden_size * 2, vocab_size
-        )
-
-        # Graph buffers
-        self.register_buffer(
-            "indices",
-            torch.arange(self.vocab_size, dtype=torch.long),
-            persistent=False
-        )
-        self.register_buffer(
-            "edge_index",
-            torch.empty((2, 0), dtype=torch.long),
-            persistent=False
-        )
-        self.register_buffer(
-            "edge_weight",
-            torch.empty((0,), dtype=torch.float),
-            persistent=False
-        )
-
-        self.post_init()
-
-    def set_graph(self, edge_index, edge_weight):
-        self.edge_index = edge_index.contiguous()
-        self.edge_weight = edge_weight.contiguous()
-
-    def look_up_table(self, canonical_ids):
-        """
-        Returns linguistic embeddings for canonical phonemes
-        """
-        all_nodes = self.look_up_model(
-            self.indices, self.edge_index, self.edge_weight
-        )
-        return all_nodes[canonical_ids]   # (B, N_can, H)
-
-    def forward(self, audio_input, canonical, audio_mask=None):
-        """
-        Returns:
-            logits: (B, T_audio, vocab_size)
-        """
-
-        # Acoustic encoder
-        if audio_mask is None:
-            acoustic = self.wav2vec2(audio_input).last_hidden_state   # (B, T_audio, H)
-        else: 
-            acoustic = acoustic = self.wav2vec2(audio_input, attention_mask=audio_mask).last_hidden_state
-        # Linguistic encoder (graph)
-        linguistic = self.look_up_table(canonical)  # (B, T_can, H)
-
-        # Cross-attention (audio queries linguistic)
-        Q = self.linear_q(acoustic)
-        K = self.linear_k(linguistic)
-        V = self.linear_v(linguistic)
-
-        context, _ = self.cross_attn(
-            Q, K, V,
-            key_padding_mask=canonical.eq(self.pad_id)
-        )  # (B, T_audio, H)
-
-        # Concatenate acoustic + linguistic context
-        fused = torch.cat([acoustic, context], dim=-1)
-
-        # Phoneme logits (CTC-ready)
-        logits = self.classifier(fused)  # (B, T_audio, vocab)
-
-        return logits
+out_df = pd.DataFrame(all_results)
+out_df.to_csv("predictions.csv", index=False)
+print("Saved: predictions.csv")
