@@ -120,16 +120,17 @@ class GCN_MDD(Wav2Vec2PreTrainedModel):
         )
         return all_nodes[canonical_ids]   # (B, N_can, H)
 
-    def forward(self, audio_input, audio_mask, canonical):
+    def forward(self, audio_input, canonical, audio_mask=None):
         """
         Returns:
             logits: (B, T_audio, vocab_size)
         """
 
         # Acoustic encoder
-        acoustic = self.wav2vec2(
-            audio_input, attention_mask=audio_mask
-        ).last_hidden_state   # (B, T_audio, H)
+        if audio_mask is None:
+            acoustic = self.wav2vec2(audio_input).last_hidden_state   # (B, T_audio, H)
+        else: 
+            acoustic = self.wav2vec2(audio_input, attention_mask=audio_mask).last_hidden_state
 
         # Linguistic encoder (graph)
         linguistic = self.look_up_table(canonical)  # (B, T_can, H)

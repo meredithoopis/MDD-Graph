@@ -21,8 +21,8 @@ def get_graph_from_json(
         cnt = float(value)
         if cnt <= 0:
             continue
-        if i == j:
-            continue  
+        # if i == j:
+        #     continue  
         raw_by_i.setdefault(i, []).append((j, cnt))
 
     edges = []
@@ -70,3 +70,6 @@ def get_graph_from_json(
 # all_edges, all_weights = get_graph_from_json("data_all.json", alpha=0.7, topk=None, min_prob=0.0, renorm_after_filter=True)
 # print(all_edges)
 # print(all_weights)
+
+
+

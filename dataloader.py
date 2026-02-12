@@ -74,7 +74,7 @@ def collate_fn(batch, pad_id=PAD_ID):
     ]
     canonical = torch.tensor(canonical_pad).long().to(device)
 
-    # transcript: CTC target 
+    # transcript: CTC target (NO padding tensor)
     transcript_flat = []
     transcript_lengths = []
 
@@ -91,6 +91,7 @@ def collate_fn(batch, pad_id=PAD_ID):
         transcript_flat,
         transcript_lengths
     )
+
 
 
 
