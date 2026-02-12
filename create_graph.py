@@ -21,8 +21,8 @@ def get_graph_from_json(
         cnt = float(value)
         if cnt <= 0:
             continue
-        if i == j:
-            continue  
+        # if i == j:
+        #     continue  
         raw_by_i.setdefault(i, []).append((j, cnt))
 
     edges = []
