@@ -1,83 +1,46 @@
 import json
-import networkx as nx
-import matplotlib.pyplot as plt
+import torch
+from itertools import combinations
+from torch_geometric.utils import to_undirected
 
-
-l1 = ["arabic", "mandarin", "hindi", "korean", "spanish", "vietnamese"]
-
-
-def get_graph(
-    languages,
-    threshold: float = 0.0,
-    alpha: float = 1.0,
-    topk: int | None = None,
-    renorm_after_topk: bool = True,
+def build_category_graph(
+    dict_vocab: dict,
+    category_json_path: str = "category.json",
+    pad_token: str = "<eps>",
+    blank_token: str = "<blank>",
+    device: str | torch.device = "cpu",
 ):
-    edges = {}
-    weights = {}
+    with open(category_json_path, "r") as f:
+        cat_map = json.load(f)  
 
-    for lang in languages:
-        data = json.load(open(f"data_{lang}.json", "r", encoding="utf8"))
-        
-        by_i = {}  # i -> list[(j, cnt)]
-        for key, value in data.items():
-            i, j = map(int, key.split("_"))
-            cnt = float(value)
+    pad_id = dict_vocab.get(pad_token, None)
+    blank_id = dict_vocab.get(blank_token, None)
+    vocab_size = len(dict_vocab)
 
-            if cnt <= 0:
-                continue
-            # if i == j:
-            #     continue  
+    # group node ids by category
+    by_cat = {}
+    for tok, idx in dict_vocab.items():
+        if tok in (pad_token, blank_token):
+            continue
+        if tok not in cat_map:
+            continue
 
-            by_i.setdefault(i, []).append((j, cnt))
+        c = int(cat_map[tok])
+        by_cat.setdefault(c, []).append(int(idx))
 
-        lang_edges = []
-        lang_weights = []
+    # connect nodes within each category
+    edges = []
+    for nodes in by_cat.values():
+        if len(nodes) < 2:
+            continue
+        for i, j in combinations(nodes, 2):
+            edges.append([i, j])
 
-        for i, items in by_i.items():
-            denom = sum(cnt for (_, cnt) in items)
-            if denom <= 0:
-                continue
-            dist = [(j, cnt / denom) for (j, cnt) in items]
+    if len(edges) == 0:
+        edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
+        return edge_index, pad_id, blank_id, vocab_size
 
-            if alpha is not None and alpha != 1.0:
-                s = sum((w ** alpha) for (_, w) in dist)
-                if s > 0:
-                    dist = [(j, (w ** alpha) / s) for (j, w) in dist]
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()  # (2, E)
+    edge_index = to_undirected(edge_index).to(device)
 
-            if topk is not None and topk > 0:
-                dist = sorted(dist, key=lambda x: x[1], reverse=True)[:topk]
-                if renorm_after_topk:
-                    s = sum(w for (_, w) in dist)
-                    if s > 0:
-                        dist = [(j, w / s) for (j, w) in dist]
-
-            if threshold is not None and threshold > 0.0:
-                dist = [(j, w) for (j, w) in dist if w >= threshold]
-                
-            for j, w in dist:
-                lang_edges.append((j, i))
-                lang_weights.append(float(w))
-
-        edges[lang] = lang_edges
-        weights[lang] = lang_weights
-
-    return edges, weights
-
-
-def visualize_multi_nodes(edges, weights, target_nodes):
-    G = nx.DiGraph()
-    for (u, v), w in zip(edges, weights):
-        if u in target_nodes:
-            G.add_edge(u, v, weight=round(w, 3))
-
-    pos = nx.spring_layout(G, seed=42)
-    plt.figure(figsize=(8, 8))
-    nx.draw(G, pos, with_labels=True, node_size=1000, arrows=True)
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, "weight"))
-    plt.title(f"Ego graph of nodes {target_nodes}")
-    plt.show()
-
-
-
-# all_edges, all_weights = get_graph(l1, threshold=0.01, alpha=0.7, topk=10)
+    return edge_index, pad_id, blank_id, vocab_size

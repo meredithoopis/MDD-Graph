@@ -16,7 +16,7 @@ from dataloader import (
     feature_extractor,
 )
 from gcn_model import GCN_MDD
-from create_graph import get_graph
+from create_graph import build_category_graph  
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CHECKPOINT_DIR = "checkpoint"
@@ -25,20 +25,18 @@ CKPT_PATH = os.path.join(CHECKPOINT_DIR, "best.pth")
 L1_LIST = ["arabic", "mandarin", "hindi", "korean", "spanish", "vietnamese"]
 gc.collect()
 
-
 id_to_token = {v: k for k, v in dict_vocab.items()}
-
-EPS_SYM = "¤"  
+EPS_SYM = "¤"
 
 labels_for_decoder = []
 for idx in range(VOCAB_SIZE):
     tok = id_to_token[idx]
     if idx == BLANK_ID:
-        labels_for_decoder.append("")         
+        labels_for_decoder.append("")
     elif idx == PAD_ID:
-        labels_for_decoder.append(EPS_SYM)    
+        labels_for_decoder.append(EPS_SYM)
     else:
-        labels_for_decoder.append(tok + " ")  
+        labels_for_decoder.append(tok + " ")
 
 decoder_ctc = build_ctcdecoder(labels=labels_for_decoder)
 
@@ -46,7 +44,6 @@ def clean_hyp(h: str) -> str:
     h = h.replace(EPS_SYM, " ")
     h = re.sub(r"\s+", " ", h).strip()
     return h
-
 
 if not os.path.exists(CKPT_PATH):
     raise FileNotFoundError(f"Checkpoint not found: {CKPT_PATH}")
@@ -58,8 +55,15 @@ ckpt = torch.load(CKPT_PATH, map_location=device)
 model.load_state_dict(ckpt["model_state_dict"])
 model.eval()
 
+edge_index, _, _, _ = build_category_graph(
+    dict_vocab=dict_vocab,
+    category_json_path="category.json",
+    pad_token="<eps>",
+    blank_token="<blank>",
+    device=device,
+)
 
-all_edges, all_weights = get_graph(L1_LIST, threshold=0.01, alpha=0.7, topk=10)
+model.set_graph(edge_index)
 
 df_test = pd.read_csv("test.csv")
 all_results = []
@@ -71,26 +75,21 @@ with torch.no_grad():
             print(f"No test samples for {L1_LANG}, skipping.")
             continue
 
-        edge_index = torch.tensor(all_edges[L1_LANG], dtype=torch.long).t().contiguous().to(device)
-        edge_weight = torch.tensor(all_weights[L1_LANG], dtype=torch.float).to(device)
-        model.set_graph(edge_index, edge_weight)
-
         for i in tqdm(range(len(df_l1)), desc=L1_LANG):
             wav_path = "EN_MDD/WAV/" + df_l1.loc[i, "Path"] + ".wav"
             wav, _ = librosa.load(wav_path, sr=16000)
 
             inputs = feature_extractor(wav, sampling_rate=16000)
-            audio = torch.tensor(inputs.input_values, device=device).float()  # (1,T)
+            audio = torch.tensor(inputs.input_values, device=device).float()
 
             canonical_str = df_l1.loc[i, "Canonical"]
             canonical_ids = text_to_tensor(canonical_str)
             canonical = torch.tensor(canonical_ids, dtype=torch.long, device=device).unsqueeze(0)
 
-            logits = model(audio, canonical)  # (1, T', V=42)
-            log_probs = logits.log_softmax(dim=-1).squeeze(0).detach().cpu().numpy()  # (T',42)
+            logits = model(audio, canonical)
+            log_probs = logits.log_softmax(dim=-1).squeeze(0).detach().cpu().numpy()
 
-            hyp = decoder_ctc.decode(log_probs)
-            hyp = clean_hyp(hyp)
+            hyp = clean_hyp(decoder_ctc.decode(log_probs))
 
             all_results.append({
                 "Path": df_l1.loc[i, "Path"],
