@@ -65,7 +65,7 @@ with torch.no_grad():
         l1 = str(df_test.loc[i, "L1"]).lower()
         l1_id = torch.tensor([L1_TO_ID.get(l1, 0)], device=device).long()
 
-        logits = model(audio, canonical, l1_id)
+        logits = model(audio, canonical, l1_ids=torch.tensor([l1_id], device=device))
         log_probs = logits.log_softmax(dim=-1).squeeze(0).detach().cpu().numpy()
 
         hyp = clean_hyp(decoder_ctc.decode(log_probs))
